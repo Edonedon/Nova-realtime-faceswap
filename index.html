@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Nova Real-time Face Swap</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.5.1646424915/face_mesh.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #0a0a0a;
+      color: white;
+      font-family: system-ui, sans-serif;
+      text-align: center;
+      overflow: hidden;
+    }
+    h1 { margin: 15px 0 5px; font-size: 1.4rem; }
+    video, canvas { 
+      width: 100%;
+      max-width: 640px;
+      height: auto;
+      border-radius: 12px;
+      margin: 10px auto;
+      display: block;
+      background: #000;
+    }
+    #controls {
+      padding: 15px;
+      background: #111;
+      position: fixed;
+      bottom: 0;
+      width: 100%;
+      box-shadow: 0 -2px 10px rgba(0,0,0,0.5);
+    }
+    button, input {
+      margin: 8px;
+      padding: 12px 20px;
+      font-size: 1rem;
+      border-radius: 8px;
+      border: none;
+    }
+    button {
+      background: #00ff88;
+      color: black;
+      font-weight: bold;
+    }
+    .status { color: #0f0; margin: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Nova Real-time Face Swap</h1>
+  <p style="margin:5px;">Upload a clear front face photo</p>
+  
+  <video id="webcam" autoplay playsinline muted></video>
+  <canvas id="output" width="640" height="480"></canvas>
+  
+  <div id="controls">
+    <input type="file" id="sourceUpload" accept="image/*">
+    <button onclick="startSwap()">🎥 Start Camera + Swap</button>
+    <button onclick="stopSwap()">Stop</button>
+    <div id="status" class="status"></div>
+  </div>
+
+  <script>
+    let sourceFace = null;
+    let cameraInstance = null;
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('output');
+    const ctx = canvas.getContext('2d');
+    const status = document.getElementById('status');
+
+    // Load source face
+    document.getElementById('sourceUpload').addEventListener('change', (e) => {
+      const img = new Image();
+      img.onload = () => {
+        sourceFace = img;
+        status.textContent = "✅ Source face loaded. Tap Start!";
+      };
+      img.src = URL.createObjectURL(e.target.files[0]);
+    });
+
+    const faceMesh = new FaceMesh({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+    });
+
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    faceMesh.onResults((results) => {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0 && sourceFace) {
+        const landmarks = results.multiFaceLandmarks[0];
+        
+        // Get face bounding box
+        let minX = 1, minY = 1, maxX = 0, maxY = 0;
+        landmarks.forEach(lm => {
+          minX = Math.min(minX, lm.x);
+          minY = Math.min(minY, lm.y);
+          maxX = Math.max(maxX, lm.x);
+          maxY = Math.max(maxY, lm.y);
+        });
+
+        const x = minX * canvas.width - 30;
+        const y = minY * canvas.height - 50;
+        const w = (maxX - minX) * canvas.width + 60;
+        const h = (maxY - minY) * canvas.height + 80;
+
+        // Draw swapped face
+        ctx.drawImage(sourceFace, x, y, w, h);
+        ctx.strokeStyle = "#00ff88";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, w, h);
+      }
+    });
+
+    async function startSwap() {
+      if (!sourceFace) {
+        status.textContent = "❌ Upload source face first!";
+        return;
+      }
+      status.textContent = "📸 Starting camera...";
+      
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { width: 640, height: 480, facingMode: "user" } 
+        });
+        video.srcObject = stream;
+
+        cameraInstance = new Camera(video, {
+          onFrame: async () => {
+            await faceMesh.send({image: video});
+          }
+        });
+        await cameraInstance.start();
+        status.textContent = "✅ Swapping live! Works best in good lighting.";
+      } catch (err) {
+        status.textContent = "❌ Camera error. Allow camera permission.";
+        console.error(err);
+      }
+    }
+
+    function stopSwap() {
+      if (cameraInstance) cameraInstance.stop();
+      if (video.srcObject) video.srcObject.getTracks().forEach(track => track.stop());
+      status.textContent = "Stopped.";
+    }
+  </script>
+</body>
+</html>
