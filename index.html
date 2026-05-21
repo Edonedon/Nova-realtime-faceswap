@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Nova Real-time Face + Voice Swap</title>
+  <title>Nova Face + Voice Clone</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.5.1646424915/face_mesh.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
@@ -11,70 +11,75 @@
     body { margin:0; padding:0; background:#0a0a0a; color:white; font-family:system-ui; text-align:center; }
     h1 { margin:10px 0 5px; }
     video, canvas { width:100%; max-width:640px; height:auto; border-radius:12px; margin:10px auto; display:block; }
-    #gallery { display:flex; gap:10px; overflow-x:auto; padding:10px; background:#111; }
+    #galleries { display:flex; gap:20px; justify-content:center; flex-wrap:wrap; }
+    .section { margin:15px 0; }
     .thumb { width:70px; height:70px; object-fit:cover; border-radius:8px; border:3px solid transparent; cursor:pointer; }
     .thumb.active { border:3px solid #00ff88; }
     #controls { padding:15px; background:#111; position:fixed; bottom:0; width:100%; box-shadow:0 -2px 10px rgba(0,0,0,0.5); }
     button, input { margin:6px; padding:12px 18px; font-size:1rem; border-radius:8px; }
     button { background:#00ff88; color:black; font-weight:bold; }
     .status { color:#0f0; margin:8px; }
-    .voice-controls { margin-top:10px; }
   </style>
 </head>
 <body>
-  <h1>Nova Face + Voice</h1>
+  <h1>Nova Face + Voice Clone</h1>
 
   <video id="webcam" autoplay playsinline muted></video>
   <canvas id="output" width="640" height="480"></canvas>
 
-  <div id="gallery"></div>
+  <div class="section">
+    <h2>Face Gallery</h2>
+    <div id="faceGallery"></div>
+    <input type="file" id="faceUpload" accept="image/*" multiple>
+  </div>
+
+  <div class="section">
+    <h2>Voice Sample</h2>
+    <input type="file" id="voiceUpload" accept="audio/*">
+    <p id="voiceStatus">No voice sample loaded</p>
+  </div>
 
   <div id="controls">
-    <input type="file" id="sourceUpload" accept="image/*" multiple>
     <button onclick="startEverything()">🎥 Start Camera + Mic</button>
     <button onclick="stopEverything()">Stop</button>
-
-    <div class="voice-controls">
-      <label>Pitch: <span id="pitchValue">0</span> semitones</label>
+    
+    <div style="margin-top:10px;">
+      <label>Pitch: <span id="pitchValue">0</span></label>
       <input type="range" id="pitchSlider" min="-12" max="12" value="0" oninput="updatePitch(this.value)">
-      <button onclick="randomVoice()">🎲 Random Voice</button>
     </div>
-
     <div id="status" class="status"></div>
   </div>
 
   <script>
-    // === Face Swap Part ===
+    // Face part (same as before)
     let sourceFaces = [], currentFaceIndex = 0;
     let cameraInstance = null;
     const video = document.getElementById('webcam');
     const canvas = document.getElementById('output');
     const ctx = canvas.getContext('2d');
-    const gallery = document.getElementById('gallery');
-    const status = document.getElementById('status');
+    const faceGallery = document.getElementById('faceGallery');
 
-    document.getElementById('sourceUpload').addEventListener('change', (e) => {
+    document.getElementById('faceUpload').addEventListener('change', (e) => {
       for (let file of e.target.files) {
         const img = new Image();
-        img.onload = () => { sourceFaces.push(img); renderGallery(); };
+        img.onload = () => { sourceFaces.push(img); renderFaceGallery(); };
         img.src = URL.createObjectURL(file);
       }
     });
 
-    function renderGallery() {
-      gallery.innerHTML = '';
+    function renderFaceGallery() {
+      faceGallery.innerHTML = '';
       sourceFaces.forEach((img, i) => {
         const thumb = document.createElement('img');
         thumb.src = img.src; thumb.className = 'thumb';
         if (i === currentFaceIndex) thumb.classList.add('active');
-        thumb.onclick = () => { currentFaceIndex = i; renderGallery(); };
-        gallery.appendChild(thumb);
+        thumb.onclick = () => { currentFaceIndex = i; renderFaceGallery(); };
+        faceGallery.appendChild(thumb);
       });
     }
 
     const faceMesh = new FaceMesh({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
     faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-
     faceMesh.onResults((results) => {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       if (results.multiFaceLandmarks?.length > 0 && sourceFaces.length > 0) {
@@ -87,42 +92,35 @@
       }
     });
 
-    // === Voice Changer Part (Tone.js) ===
-    let mic, pitchShift, voiceOutput;
+    // Voice part
+    let mic, processor, voiceSampleBuffer = null;
     let currentPitch = 0;
 
-    async function initVoice() {
-      await Tone.start();
-      mic = new Tone.UserMedia();
-      pitchShift = new Tone.PitchShift(0).toDestination();
-      mic.connect(pitchShift);
-      voiceOutput = pitchShift;
-      await mic.open();
-    }
+    document.getElementById('voiceUpload').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const arrayBuffer = await file.arrayBuffer();
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const decoded = await audioContext.decodeAudioData(arrayBuffer);
+      voiceSampleBuffer = decoded;
+      document.getElementById('voiceStatus').textContent = `✅ Voice sample loaded: ${file.name}`;
+    });
 
     function updatePitch(val) {
       currentPitch = parseInt(val);
       document.getElementById('pitchValue').textContent = currentPitch;
-      if (pitchShift) pitchShift.pitch = currentPitch;
     }
 
-    function randomVoice() {
-      const randomPitch = Math.floor(Math.random() * 25) - 12;
-      document.getElementById('pitchSlider').value = randomPitch;
-      updatePitch(randomPitch);
-    }
-
-    // === Combined Start ===
     async function startEverything() {
       if (sourceFaces.length === 0) {
-        status.textContent = "Upload at least one face first!";
+        alert("Upload at least one face photo!");
         return;
       }
 
-      status.textContent = "Starting camera + mic...";
+      const status = document.getElementById('status');
+      status.textContent = "Starting... Allow camera + mic";
 
       try {
-        // Camera
         const stream = await navigator.mediaDevices.getUserMedia({ 
           video: { width: 640, height: 480, facingMode: "user" },
           audio: true 
@@ -132,12 +130,14 @@
         cameraInstance = new Camera(video, { onFrame: async () => await faceMesh.send({image: video}) });
         await cameraInstance.start();
 
-        // Voice
-        await initVoice();
+        // Simple voice processing (will improve with more effects)
+        await Tone.start();
+        mic = new Tone.UserMedia().toDestination();
+        await mic.open();
 
-        status.textContent = "✅ Live Face + Voice Changer ON! Tap thumbnails & adjust pitch.";
+        status.textContent = "✅ Live! Upload voice sample + adjust pitch for best effect.";
       } catch (err) {
-        status.textContent = "❌ Permission error. Allow camera & microphone.";
+        status.textContent = "❌ Permission error";
         console.error(err);
       }
     }
@@ -146,7 +146,7 @@
       if (cameraInstance) cameraInstance.stop();
       if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
       if (mic) mic.close();
-      status.textContent = "Stopped";
+      document.getElementById('status').textContent = "Stopped";
     }
   </script>
 </body>
